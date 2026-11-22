@@ -1,25 +1,51 @@
 {
   "expo": {
-    "name": "phone-claude-bridge-app",
-    "slug": "phone-claude-bridge-app",
-    "version": "1.0.0",
-    "orientation": "portrait",
+    "name": "TetherDeck",
+    "slug": "claude-remote",
+    "version": "1.0.3",
+    "orientation": "default",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "scheme": "clauderemote",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "bundleIdentifier": "com.cyan0914.clauderemote",
+      "supportsTablet": false,
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true,
+          "NSAllowsArbitraryLoadsInWebContent": true,
+          "NSAllowsLocalNetworking": true
+        },
+        "NSLocalNetworkUsageDescription": "TetherDeck connects to the bridge server running on your own computer (over your local network or Tailscale) so you can control Claude Code from your phone.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
-    "android": {
-      "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
-      },
-      "predictiveBackGestureEnabled": false
-    },
-    "web": {
-      "favicon": "./assets/favicon.png"
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#111418"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#111418"
+        }
+      ],
+      "expo-status-bar"
+    ],
+    "owner": "cyan0914",
+    "extra": {
+      "eas": {
+        "projectId": "e5a2d941-e2ce-4f3c-bc10-04cf83d00b59"
+      }
     }
   }
 }
