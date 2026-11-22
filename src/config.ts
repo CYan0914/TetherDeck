@@ -5,3 +5,7 @@ export const APP_NAME = 'TetherDeck';
 export const DEFAULT_SERVER_URL = '';
 
 export const CONNECT_TIMEOUT_MS = 8000;
+
+// [2026-11-22] 单个地址等多久没等到真桥信号就换下一个。
+// 不能靠 WebView 自己的 onError：黑洞地址要等 URLSession 的 60s 才报错。
+export const PAGE_LOAD_TIMEOUT_MS = 15000;

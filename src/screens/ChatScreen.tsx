@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { buildBridgeInjection } from '../bridge/injection';
 import { useNotificationBridge } from '../bridge/useNotificationBridge';
+import { PAGE_LOAD_TIMEOUT_MS } from '../config';
 import { DEMO_HTML } from '../demo/demoHtml';
 import type { BridgeSession, BridgeState } from '../types';
 import { isNativeMessage } from '../types';
@@ -39,8 +40,16 @@ export function ChatScreen({ serverUrls, token, onBack, demo, onGoodUrl }: ChatS
     setIdx(i);
   }, []);
 
+  // 迟到的事件要能认出来自哪个地址：onError 和 onHttpError 会为同一次导航各报一次，
+  // 重挂载时旧 WebView 的错误也可能晚一步到。不认地址的话会连跳两格、静默少试一个。
+  const activeRef = useRef(active);
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
+
   const handleLoadError = useCallback(
-    (msg: string) => {
+    (msg: string, from?: string) => {
+      if (from && from !== activeRef.current) return;
       const next = idxRef.current + 1;
       if (next < urls.length) {
         setLoadError(null);
@@ -54,9 +63,10 @@ export function ChatScreen({ serverUrls, token, onBack, demo, onGoodUrl }: ChatS
 
   const retryAll = useCallback(() => {
     setLoadError(null);
+    const wasFirst = idxRef.current === 0;
     goTo(0);
-    // 已经在 0 时不会重挂载，手动 reload 一次
-    webRef.current?.reload();
+    // 已经在 0 时不会因 key 变化重挂载，才需要手动 reload；否则 reload 打在即将卸载的实例上
+    if (wasFirst) webRef.current?.reload();
   }, [goTo]);
 
   const handleBridge = useNotificationBridge();
@@ -67,6 +77,17 @@ export function ChatScreen({ serverUrls, token, onBack, demo, onGoodUrl }: ChatS
   useEffect(() => {
     goodReported.current = false;
   }, [active]);
+
+  // [2026-11-22] 单地址超时。原来只靠 WebView 的 onError，而黑洞地址要等 URLSession
+  // 自己超时（约 60s）才报错，N 个地址就是 N×60s 的黑屏。这里给每个地址一个独立时限：
+  // 到时间还没拿到真桥状态，就当作失败换下一个。
+  useEffect(() => {
+    if (demo || !active) return;
+    const timer = setTimeout(() => {
+      if (!goodReported.current) handleLoadError('No response', active);
+    }, PAGE_LOAD_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [active, demo, handleLoadError]);
 
   // iOS 后台会挂起 WKWebView（SSE + 注入桥一起断）。回前台优先让页面自己重连 SSE
   // （秒级、不重建 DOM、滚动位置和输入框都还在），2.5s 内没回执才整页 reload 兜底。
@@ -127,11 +148,19 @@ export function ChatScreen({ serverUrls, token, onBack, demo, onGoodUrl }: ChatS
         }
         return;
       }
-      if (!goodReported.current) {
-        goodReported.current = true;
-        onGoodUrl?.(active);
+      // [2026-11-22] 只有真桥才认。注入脚本在任何页面上都会 post，酒店门户、Cloudflare
+      // 登录页这类返回 200 的陌生页面会发一条 src:'dom' 的假状态；以前它被当作"连上了"
+      // 并写回存储排到第一位，下次冷启动直接进那个页面。src==='state' 只在页面拿到
+      // SSE 快照后出现，是现成可用的真桥判据。
+      const s = msg as BridgeState;
+      if (s && typeof s === 'object' && s.src === 'state' && typeof s.status === 'string') {
+        setLoadError(null);
+        if (!goodReported.current) {
+          goodReported.current = true;
+          onGoodUrl?.(active);
+        }
       }
-      setBridgeState(msg as BridgeState);
+      setBridgeState(s);
       handleBridge(raw);
     },
     [handleBridge, onGoodUrl, active]
@@ -229,9 +258,13 @@ export function ChatScreen({ serverUrls, token, onBack, demo, onGoodUrl }: ChatS
         contentInsetAdjustmentBehavior="never" // 页面自己管 safe-area（env()）
         injectedJavaScriptBeforeContentLoaded={demo ? undefined : injection}
         onMessage={(e) => onMessage(e.nativeEvent.data)}
-        onHttpError={demo ? undefined : (s) => handleLoadError('HTTP ' + s.nativeEvent.statusCode)}
+        onHttpError={
+          demo ? undefined : (s) => handleLoadError('HTTP ' + s.nativeEvent.statusCode, active)
+        }
         onError={
-          demo ? undefined : (s) => handleLoadError(s.nativeEvent.description ?? 'Failed to load')
+          demo
+            ? undefined
+            : (s) => handleLoadError(s.nativeEvent.description ?? 'Failed to load', active)
         }
         style={styles.web}
       />

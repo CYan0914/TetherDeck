@@ -26,6 +26,8 @@ export default function App() {
     DEFAULT_SERVER_URL ? [DEFAULT_SERVER_URL] : []
   );
   const [token, setToken] = useState<string | null>(null);
+  // 仅给设置页当初值用：连上的地址排到前面，但不动 serverUrls（避免 WebView 重挂载）
+  const [preferred, setPreferred] = useState<string[] | null>(null);
   const [booted, setBooted] = useState(false);
 
   useEffect(() => {
@@ -34,9 +36,10 @@ export default function App() {
         const [u, t] = await Promise.all([loadServerUrls(), loadToken()]);
         if (u.length) setServerUrls(u);
         setToken(t);
-        // [2026-11-19] 有保存的地址+口令就直接进聊天页: 冷启动不再停在设置页等着点一下。
+        // [2026-11-19] 有保存的地址就直接进聊天页: 冷启动不再停在设置页等着点一下。
+        // [2026-11-22] 不再要求口令非空 —— 桥可以不开鉴权，设置页的测试也把 200 当"连上了"。
         // 设置页仍可从聊天页的 Back 回去改。
-        if (u.length && t) setRoute({ name: 'chat' });
+        if (u.length) setRoute({ name: 'chat' });
       } finally {
         setBooted(true);
       }
@@ -53,6 +56,7 @@ export default function App() {
   }, []);
 
   const handleConnect = (urls: string[], tok: string | null) => {
+    setPreferred(null);
     setServerUrls(urls);
     setToken(tok);
     void saveServerUrls(urls);
@@ -61,9 +65,12 @@ export default function App() {
   };
 
   // 哪个地址真的连上了，就把它排到第一位 —— 下次冷启动直接命中，不用再从死地址开始试。
-  // 只写存储、不改 state：改了会让 ChatScreen 的列表错位，WebView 平白重挂一次。
+  // 同时写一份 preferred 给设置页当初始值：只改这次渲染用的 serverUrls 会让 ChatScreen
+  // 的列表错位、WebView 白重挂一次，但完全不更新又会让用户从设置页原样点回来时，
+  // 把刚记住的顺序用旧值覆盖掉。
   const handleGoodUrl = (url: string) => {
     const next = [url, ...serverUrls.filter((u) => u !== url)];
+    setPreferred(next);
     void saveServerUrls(next);
   };
 
@@ -77,7 +84,7 @@ export default function App() {
         <StatusBar style="light" />
         {route.name === 'settings' ? (
           <SettingsScreen
-            initialUrls={serverUrls}
+            initialUrls={preferred ?? serverUrls}
             initialToken={token}
             onConnect={handleConnect}
             onTryDemo={() => setRoute({ name: 'demo' })}

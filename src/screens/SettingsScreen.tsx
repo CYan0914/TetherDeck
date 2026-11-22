@@ -9,18 +9,20 @@ export interface SettingsScreenProps {
   onTryDemo: () => void;
 }
 
+// [2026-11-22] 不用 new URL()：RN 里的 URL 是自家 polyfill，不会抛错、protocol 取的是
+// 原始大小写，大写 scheme 会被误判、userinfo（http://good@evil）也能混过去。
+// 直接用正则认 http(s)://host[:port][/path]，并明确拒绝 authority 里的 @。
 function normalizeUrl(raw: string): string | null {
   const s = raw.trim().replace(/\/+$/, '');
   if (!s) return null;
   const withScheme = /^https?:\/\//i.test(s) ? s : 'http://' + s;
-  try {
-    const u = new URL(withScheme);
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
-    if (!u.hostname) return null;
-    return u.toString().replace(/\/+$/, '');
-  } catch {
-    return null;
-  }
+  const m = /^(https?):\/\/([^/?#\s]+)([/?#].*)?$/i.exec(withScheme);
+  if (!m) return null;
+  const authority = m[2];
+  if (authority.includes('@')) return null; // 不给 userinfo 留位置，避免看着像 A 其实连 B
+  if (!/^[A-Za-z0-9._\-\[\]:]+$/.test(authority)) return null;
+  const scheme = m[1].toLowerCase();
+  return scheme + '://' + authority + (m[3] ? m[3].replace(/\/+$/, '') : '');
 }
 
 // [2026-11-21] 允许一次填多个地址（局域网 / Tailscale / 隧道），逗号或换行分隔。

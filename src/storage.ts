@@ -25,8 +25,10 @@ export async function loadServerUrls(): Promise<string[]> {
 export async function saveServerUrls(urls: string[]): Promise<void> {
   try {
     await SecureStore.setItemAsync(KEY_SERVER_URLS, JSON.stringify(urls));
-    // 首个地址写回旧键，回退到单地址逻辑时也能用
+    // 首个地址写回旧键，回退到单地址逻辑时也能用。
+    // 列表为空时必须把旧键也删掉，否则下次 loadServerUrls 会把那条陈旧地址"复活"。
     if (urls[0]) await SecureStore.setItemAsync(KEY_SERVER_URL, urls[0]);
+    else await SecureStore.deleteItemAsync(KEY_SERVER_URL);
   } catch {
     // 忽略：SecureStore 失败不阻塞主流程
   }

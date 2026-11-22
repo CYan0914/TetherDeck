@@ -97,13 +97,14 @@ eas submit --platform ios --latest
 
 ## Status
 
-TetherDeck 1.0.2 is live on the App Store. 1.0.3 is in review — it adds multiple server addresses with automatic failover.
+TetherDeck 1.0.3 is live on the App Store. 1.0.4 is in review.
 
-Known rough edges, tracked for the next build:
+1.0.4 tightens the multi-address failover:
 
-- No per-address timeout yet, so a blackholed address can stall the failover for one URLSession timeout
-- A page that returns HTTP 200 but is not the bridge can be mistaken for a working address
-- Returning from the background cancels the reload fallback too eagerly
+- a 15-second per-address deadline, so a blackholed address no longer stalls for a full URLSession timeout
+- an address only counts as working once the page actually delivers bridge state, so a captive portal or any other HTTP 200 page is not mistaken for the bridge
+- load errors clear on success, and late errors from a previous address no longer skip the next one
+- the bridge page now acknowledges a reconnect only after the event stream is actually open
 
 ## License
 
