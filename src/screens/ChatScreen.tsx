@@ -152,8 +152,10 @@ export function ChatScreen({ serverUrls, token, onBack, demo, onGoodUrl }: ChatS
       // 登录页这类返回 200 的陌生页面会发一条 src:'dom' 的假状态；以前它被当作"连上了"
       // 并写回存储排到第一位，下次冷启动直接进那个页面。src==='state' 只在页面拿到
       // SSE 快照后出现，是现成可用的真桥判据。
+      // 只认 src==='state'：注入脚本够到页面顶层 state 对象时才置这个值，而那是桥页面独有的。
+      // 不再额外要求 status 是字符串 —— status 有可能是 null，那会让可用地址被判死。
       const s = msg as BridgeState;
-      if (s && typeof s === 'object' && s.src === 'state' && typeof s.status === 'string') {
+      if (s && typeof s === 'object' && s.src === 'state') {
         setLoadError(null);
         if (!goodReported.current) {
           goodReported.current = true;
