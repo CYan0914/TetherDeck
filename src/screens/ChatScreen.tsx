@@ -2,6 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
+import {
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+  useAudioRecorder,
+} from 'expo-audio';
+import * as FileSystem from 'expo-file-system/legacy';
 import { buildBridgeInjection } from '../bridge/injection';
 import { useNotificationBridge } from '../bridge/useNotificationBridge';
 import { PAGE_LOAD_TIMEOUT_MS } from '../config';
@@ -27,6 +34,10 @@ export function ChatScreen({ serverUrls, token, onBack, demo, onGoodUrl }: ChatS
   const [historyLoading, setHistoryLoading] = useState(false);
   const [sessions, setSessions] = useState<BridgeSession[]>([]);
   const [approvalBusy, setApprovalBusy] = useState(false);
+
+  // [2026-11-22] 语音输入：页面里长按麦克风 → 这里录音 → 松手传桥转写。
+  const recorder = useAudioRecorder(RecordingPresets.LOW_QUALITY);
+  const voice = useRef({ on: false, starting: false, stopQueued: false, startedAt: 0, cap: 0 });
 
   // [2026-11-21] 多地址：局域网 / Tailscale / 隧道可能同时只有一个通。按顺序试，
   // 加载失败就自动换下一个，全不通才把错误抛给用户。idxRef 给 onError 用（闭包拿不到最新 state）。
@@ -121,6 +132,109 @@ export function ChatScreen({ serverUrls, token, onBack, demo, onGoodUrl }: ChatS
     webRef.current?.injectJavaScript(js);
   }, []);
 
+  const tokenRef = useRef(token);
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
+
+  const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+  // 松手：停止录音 → base64 → POST /api/transcribe → 把文本塞回页面输入框。
+  const stopVoice = useCallback(async () => {
+    const v = voice.current;
+    if (v.starting) {
+      v.stopQueued = true;   // 录音还没准备好，等 startVoice 收尾时再停
+      return;
+    }
+    if (!v.on) return;
+    v.on = false;
+    if (v.cap) clearTimeout(v.cap);
+    const duration = Date.now() - v.startedAt;
+    try {
+      await recorder.stop();
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+      const uri = recorder.uri;
+      if (duration < 400 || !uri) {
+        runInPage('voiceState', { state: 'idle', error: duration < 400 ? '说话时间太短' : '' });
+        return;
+      }
+      runInPage('voiceState', { state: 'transcribing' });
+      const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 60000);
+      let r: Response;
+      try {
+        r = await fetch(active + '/api/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-auth-token': tokenRef.current || '' },
+          body: JSON.stringify({ audio: b64, format: 'mp4' }),
+          signal: ctrl.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+      const data = (await r.json().catch(() => ({}))) as { text?: string; error?: string };
+      if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+      runInPage('voiceResult', { text: data.text || '', final: true });
+      runInPage('voiceState', { state: 'idle' });
+      try {
+        await FileSystem.deleteAsync(uri, { idempotent: true });
+      } catch {}
+    } catch (e) {
+      const msg = errText(e) === 'Aborted' ? 'timed out' : errText(e);
+      runInPage('voiceState', { state: 'idle', error: 'Voice failed: ' + msg });
+    }
+  }, [recorder, active, runInPage]);
+
+  const startVoice = useCallback(async () => {
+    const v = voice.current;
+    if (v.on || v.starting) return;
+    v.starting = true;
+    v.stopQueued = false;
+    try {
+      if (!tokenRef.current) {
+        runInPage('voiceState', { state: 'idle', error: 'Voice input needs your access token. Add it in Settings.' });
+        return;
+      }
+      const perm = await requestRecordingPermissionsAsync();
+      if (!perm.granted) {
+        runInPage('voiceState', { state: 'idle', error: 'Microphone permission denied. Enable it in iOS Settings.' });
+        return;
+      }
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+      v.on = true;
+      v.startedAt = Date.now();
+      runInPage('voiceState', { state: 'recording' });
+      if (v.cap) clearTimeout(v.cap);
+      v.cap = setTimeout(() => {
+        void stopVoice();
+      }, 120000);
+    } catch (e) {
+      runInPage('voiceState', { state: 'idle', error: 'Recording failed: ' + errText(e) });
+    } finally {
+      v.starting = false;
+      if (v.stopQueued) {
+        v.stopQueued = false;
+        void stopVoice();
+      }
+    }
+  }, [recorder, runInPage, stopVoice]);
+
+  // 离开聊天页时别把录音会话留在后台
+  useEffect(
+    () => () => {
+      const v = voice.current;
+      if (v.cap) clearTimeout(v.cap);
+      if (v.on) {
+        v.on = false;
+        recorder.stop().catch(() => {});
+      }
+    },
+    [recorder]
+  );
+
   const onMessage = useCallback(
     (raw: string) => {
       let msg: unknown;
@@ -145,6 +259,10 @@ export function ChatScreen({ serverUrls, token, onBack, demo, onGoodUrl }: ChatS
         } else if (msg.type === 'td-error') {
           setHistoryLoading(false);
           setApprovalBusy(false);
+        } else if (msg.type === 'td-voice-start') {
+          void startVoice();
+        } else if (msg.type === 'td-voice-stop') {
+          void stopVoice();
         }
         return;
       }
@@ -165,7 +283,7 @@ export function ChatScreen({ serverUrls, token, onBack, demo, onGoodUrl }: ChatS
       setBridgeState(s);
       handleBridge(raw);
     },
-    [handleBridge, onGoodUrl, active]
+    [handleBridge, onGoodUrl, active, startVoice, stopVoice]
   );
 
   const openHistory = () => {

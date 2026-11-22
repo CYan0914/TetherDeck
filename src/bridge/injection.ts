@@ -12,6 +12,8 @@ export function buildBridgeInjection(token: string | null): string {
   try { if (window.__ccbBridgeInstalled) return; window.__ccbBridgeInstalled = true; } catch(e){}
 
   var token = ${tokenLiteral};
+  /* 语音输入需要口令走 X-Auth-Token 调 /api/transcribe; 没有口令就不显示麦克风 */
+  try { window.__tdVoiceSupported = ${token ? 'true' : 'false'}; } catch(e){}
   var post = function(obj){
     try {
       if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {

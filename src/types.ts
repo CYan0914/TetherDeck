@@ -14,7 +14,14 @@ export interface BridgeState {
 
 // 页面里 window.__tdNative 回给原生壳的应答
 export interface NativeMessage {
-  type: 'td-sessions' | 'td-resumed' | 'td-approved' | 'td-error' | 'td-reconnected';
+  type:
+    | 'td-sessions'
+    | 'td-resumed'
+    | 'td-approved'
+    | 'td-error'
+    | 'td-reconnected'
+    | 'td-voice-start'
+    | 'td-voice-stop';
   sessions?: BridgeSession[];
   ok?: boolean;
   cmd?: string;
